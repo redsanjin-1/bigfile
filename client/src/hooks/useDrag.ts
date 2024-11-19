@@ -20,7 +20,7 @@ function useDrag(domRef: RefObject<HTMLDivElement>) {
       return
     }
     if (file.size > MAX_FILE_SIZE) {
-      message.error('文件大小不能超过1G')
+      message.error('文件大小不能超过200m')
       return
     }
     if (!(file.type.startsWith('image/') || file.type.startsWith('video/'))) {
@@ -34,6 +34,10 @@ function useDrag(domRef: RefObject<HTMLDivElement>) {
     event.stopPropagation()
     checkFile(event.dataTransfer.files)
   }, [])
+  const resetFileStatus = () => {
+    setSelectFile(null)
+    setFilePreview({ url: '', type: '' })
+  }
 
   useEffect(() => {
     if (!selectedFile) return
@@ -65,6 +69,7 @@ function useDrag(domRef: RefObject<HTMLDivElement>) {
   return {
     selectedFile,
     filePreview,
+    resetFileStatus,
   }
 }
 
