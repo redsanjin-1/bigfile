@@ -1,30 +1,41 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { InboxOutlined } from '@ant-design/icons'
-import { Button, App, theme, Progress, Space } from 'antd'
+import { Button, App, theme, Progress, Space, Spin } from 'antd'
 import { MessageInstance } from 'antd/es/message/interface'
 // import { AxiosProgressEvent } from 'axios'
-import './FileUploader.css'
-import useDrag from './hooks/useDrag'
-import { CHUNK_SIZE, UPLOAD_STATUS } from './constant'
-import axiosInstance from './api/http'
 import axios, { CancelTokenSource } from 'axios'
+// import { getFileName } from './utils'
+import './FileUploader.css'
+import { CHUNK_SIZE, UPLOAD_STATUS, MAX_RETRIES } from './constant'
+import useDrag from './hooks/useDrag'
+import axiosInstance from './api/http'
 
 const { useToken } = theme
 
 function FileUploader() {
   const { message } = App.useApp()
   const uploadContainerRef = useRef<HTMLDivElement>(null)
-  const { filePreview, selectedFile, resetFileStatus } =
-    useDrag(uploadContainerRef)
+  const [uploadStatus, setUploadStatus] = useState(UPLOAD_STATUS.NOT_STARTED)
+  const { filePreview, selectedFile, resetFileStatus } = useDrag(
+    uploadContainerRef,
+    uploadStatus
+  )
   const { token } = useToken()
   const containerStyle = {
     backgroundColor: token.colorFillAlter,
     borderColor: token.colorBorder,
   }
+  // web worker
+  const [filenameWorker, setFileNameWorker] = useState<Worker>()
+  const [isCalculatingFilename, setIsCalculatingFilename] = useState(false)
+  useEffect(() => {
+    const fnworker = new Worker('/filenameWorker.js')
+    setFileNameWorker(fnworker)
+  }, [])
+  // 上传进度条
   const [uploadProgress, setUploadProgress] = useState<Record<string, number>>(
     {}
   )
-  const [uploadStatus, setUploadStatus] = useState(UPLOAD_STATUS.NOT_STARTED)
   // 上传请求的取消 token
   const [cancelTokens, setCancelTokens] = useState<CancelTokenSource[]>([])
   const pauseUpload = () => {
@@ -96,16 +107,32 @@ function FileUploader() {
       return
     }
     setUploadStatus(UPLOAD_STATUS.UPLOADING)
-    const filename = await getFileName(selectedFile)
-    console.log('filename', filename)
-    await uploadFile(
-      selectedFile,
-      filename,
-      message,
-      setUploadProgress,
-      resetAllStatus,
-      setCancelTokens
-    )
+    if (filenameWorker) {
+      filenameWorker.postMessage(selectedFile)
+      setIsCalculatingFilename(true)
+      filenameWorker.onmessage = async (event) => {
+        console.log('worker', event.data)
+        setIsCalculatingFilename(false)
+        await uploadFile(
+          selectedFile,
+          event.data,
+          message,
+          setUploadProgress,
+          resetAllStatus,
+          setCancelTokens
+        )
+      }
+    }
+    // const filename = await getFileName(selectedFile)
+    // console.log('filename', filename)
+    // await uploadFile(
+    //   selectedFile,
+    //   filename,
+    //   message,
+    //   setUploadProgress,
+    //   resetAllStatus,
+    //   setCancelTokens
+    // )
   }
   const resetAllStatus = () => {
     resetFileStatus()
@@ -114,17 +141,19 @@ function FileUploader() {
   }
 
   return (
-    <Space direction="vertical" size="middle" style={{ display: 'flex' }}>
-      <div
-        className="upload-container"
-        ref={uploadContainerRef}
-        style={containerStyle}
-      >
-        {renderFilePreview(filePreview)}
-      </div>
-      {renderButton()}
-      {renderProgress()}
-    </Space>
+    <Spin spinning={isCalculatingFilename} tip="正在计算文件名...">
+      <Space direction="vertical" size="middle" style={{ display: 'flex' }}>
+        <div
+          className="upload-container"
+          ref={uploadContainerRef}
+          style={containerStyle}
+        >
+          {renderFilePreview(filePreview)}
+        </div>
+        {renderButton()}
+        {renderProgress()}
+      </Space>
+    </Spin>
   )
 }
 
@@ -139,7 +168,8 @@ async function uploadFile(
   message: MessageInstance,
   setUploadProgress: Function,
   resetAllStatus: Function,
-  setCancelTokens: Function
+  setCancelTokens: Function,
+  retryCount = 0
 ) {
   const verifyRes: any = await axiosInstance.get(`/verify/${filename}`)
   if (!verifyRes.needUpload) {
@@ -209,6 +239,20 @@ async function uploadFile(
       console.log('上传暂停', error)
       message.warning('上传暂停')
     } else {
+      // 失败重试
+      if (retryCount < MAX_RETRIES) {
+        console.log('上传失败了，重试中...')
+        uploadFile(
+          file,
+          filename,
+          message,
+          setUploadProgress,
+          resetAllStatus,
+          setCancelTokens,
+          retryCount + 1
+        )
+        return
+      }
       console.error('error')
       message.error('上传错误')
     }
@@ -259,39 +303,6 @@ function createFileChunks(file: File, filename: string) {
   }
 
   return chunks
-}
-
-/**
- * 根据文件对象获取文件内容的 hash 文件名
- * @param file 文件
- */
-async function getFileName(file: File) {
-  const fileHash = await calculateFileHash(file)
-  const fileExtension = file.name.split('.').pop()
-
-  return `${fileHash}.${fileExtension}`
-}
-
-/**
- * 计算文件 hash 字符串
- * @param file 文件
- * @returns
- */
-async function calculateFileHash(file: File) {
-  const fileArrayBuffer = await file.arrayBuffer()
-  const hashBuffer = await crypto.subtle.digest('SHA-256', fileArrayBuffer)
-  return bufferToHex(hashBuffer)
-}
-
-/**
- * 将 arraybuffer 转为 16 进制的字符串
- * @param buffer
- * @returns
- */
-function bufferToHex(buffer: ArrayBuffer) {
-  return Array.from(new Uint8Array(buffer))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
 }
 
 function renderFilePreview(filePreview: any) {
