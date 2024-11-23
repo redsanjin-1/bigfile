@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const axiosInstance = axios.create({
+export const axiosInstance = axios.create({
   baseURL: 'http://localhost:8080',
 })
 
@@ -17,5 +17,3 @@ axiosInstance.interceptors.response.use(
     throw error
   }
 )
-
-export default axiosInstance

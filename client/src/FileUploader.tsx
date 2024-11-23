@@ -2,15 +2,18 @@ import { useEffect, useRef, useState } from 'react'
 import { InboxOutlined } from '@ant-design/icons'
 import { Button, App, theme, Progress, Space, Spin } from 'antd'
 import { MessageInstance } from 'antd/es/message/interface'
-// import { AxiosProgressEvent } from 'axios'
 import axios, { CancelTokenSource } from 'axios'
 // import { getFileName } from './utils'
-import './FileUploader.css'
 import { CHUNK_SIZE, UPLOAD_STATUS, MAX_RETRIES } from './constant'
-import useDrag from './hooks/useDrag'
-import axiosInstance from './api/http'
-
-const { useToken } = theme
+import useDrag, { FilePreviewType } from './hooks/useDrag'
+import {
+  verifyFile,
+  mergeFile,
+  createUploadRequest,
+  UploadProgressType,
+  UploadedChunkType,
+} from './api'
+import './FileUploader.css'
 
 function FileUploader() {
   const { message } = App.useApp()
@@ -20,11 +23,6 @@ function FileUploader() {
     uploadContainerRef,
     uploadStatus
   )
-  const { token } = useToken()
-  const containerStyle = {
-    backgroundColor: token.colorFillAlter,
-    borderColor: token.colorBorder,
-  }
   // web worker
   const [filenameWorker, setFileNameWorker] = useState<Worker>()
   const [isCalculatingFilename, setIsCalculatingFilename] = useState(false)
@@ -32,10 +30,9 @@ function FileUploader() {
     const fnworker = new Worker('/filenameWorker.js')
     setFileNameWorker(fnworker)
   }, [])
+
   // 上传进度条
-  const [uploadProgress, setUploadProgress] = useState<Record<string, number>>(
-    {}
-  )
+  const [uploadProgress, setUploadProgress] = useState<UploadProgressType>({})
   // 上传请求的取消 token
   const [cancelTokens, setCancelTokens] = useState<CancelTokenSource[]>([])
   const pauseUpload = () => {
@@ -146,7 +143,7 @@ function FileUploader() {
         <div
           className="upload-container"
           ref={uploadContainerRef}
-          style={containerStyle}
+          style={getContainerStyle()}
         >
           {renderFilePreview(filePreview)}
         </div>
@@ -155,6 +152,19 @@ function FileUploader() {
       </Space>
     </Spin>
   )
+}
+
+/**
+ *获取容器样式，基于antd的token自适应系统主题
+ * @returns
+ */
+function getContainerStyle() {
+  const { useToken } = theme
+  const { token } = useToken()
+  return {
+    backgroundColor: token.colorFillAlter,
+    borderColor: token.colorBorder,
+  }
 }
 
 /**
@@ -171,8 +181,8 @@ async function uploadFile(
   setCancelTokens: Function,
   retryCount = 0
 ) {
-  const verifyRes: any = await axiosInstance.get(`/verify/${filename}`)
-  if (!verifyRes.needUpload) {
+  const { needUpload, uploadedChunkList } = await verifyFile(filename)
+  if (!needUpload) {
     message.success('文件已存在，秒传成功')
     return resetAllStatus()
   }
@@ -182,8 +192,8 @@ async function uploadFile(
   const requests = chunks.map(({ chunk, chunkFileName }) => {
     const cancelToken = axios.CancelToken.source()
     newCancelTokens.push(cancelToken)
-    const existingChunk = verifyRes.uploadedChunkList.find(
-      (uploadedChunk: any) => {
+    const existingChunk = uploadedChunkList.find(
+      (uploadedChunk: UploadedChunkType) => {
         return uploadedChunk.chunkFileName === chunkFileName
       }
     )
@@ -193,18 +203,18 @@ async function uploadFile(
       const remainingChunk = chunk.slice(uploadedSize)
       // 已经完全上传
       if (remainingChunk.size === 0) {
-        setUploadProgress((preProgress: any) => ({
+        setUploadProgress((preProgress: UploadProgressType) => ({
           ...preProgress,
           [chunkFileName]: 100,
         }))
         return Promise.resolve()
       }
-      setUploadProgress((preProgress: any) => ({
+      setUploadProgress((preProgress: UploadProgressType) => ({
         ...preProgress,
         [chunkFileName]: (uploadedSize * 100) / chunk.size,
       }))
 
-      return createRequest(
+      return createUploadRequest(
         filename,
         chunkFileName,
         remainingChunk,
@@ -214,7 +224,7 @@ async function uploadFile(
         chunk.size
       )
     } else {
-      return createRequest(
+      return createUploadRequest(
         filename,
         chunkFileName,
         chunk,
@@ -230,7 +240,7 @@ async function uploadFile(
     // 并行上传每个分片
     await Promise.all(requests)
     // 合并分片
-    await axiosInstance.get(`/merge/${filename}`)
+    await mergeFile(filename)
     await message.success('上传成功')
     resetAllStatus()
   } catch (error) {
@@ -259,38 +269,12 @@ async function uploadFile(
   }
 }
 
-function createRequest(
-  filename: string,
-  chunkFileName: string,
-  chunk: Blob,
-  setUploadProgress: Function,
-  cancelToken: CancelTokenSource,
-  start: number,
-  totalSize: number
-) {
-  return axiosInstance.post(`/upload/${filename}`, chunk, {
-    headers: {
-      'Content-Type': 'application/octet-stream',
-    },
-    params: {
-      chunkFileName,
-      start, // 写入文件的起始位置
-    },
-    // AxiosProgressEvent
-    onUploadProgress: (event: any) => {
-      // 用已上传的字节数 + 上次上传成功字节数 / 总字节数
-      const percentCompleted = Math.round(
-        ((event.loaded + start) * 100) / totalSize
-      )
-      setUploadProgress((preProgress: any) => ({
-        ...preProgress,
-        [chunkFileName]: percentCompleted,
-      }))
-    },
-    cancelToken: cancelToken.token,
-  })
-}
-
+/**
+ * 生成切片
+ * @param file 文件对象
+ * @param filename 文件名
+ * @returns
+ */
 function createFileChunks(file: File, filename: string) {
   let chunks = []
   let count = Math.ceil(file.size / CHUNK_SIZE)
@@ -305,7 +289,12 @@ function createFileChunks(file: File, filename: string) {
   return chunks
 }
 
-function renderFilePreview(filePreview: any) {
+/**
+ * 生成预览容器
+ * @param filePreview
+ * @returns
+ */
+function renderFilePreview(filePreview: FilePreviewType) {
   const { type, url } = filePreview
   if (url) {
     if (type.startsWith('video/')) {

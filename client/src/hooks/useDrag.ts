@@ -2,6 +2,11 @@ import { useState, useEffect, RefObject } from 'react'
 import { App } from 'antd'
 import { MAX_FILE_SIZE, ALLOW_MEDIA_TYPE, UPLOAD_STATUS } from '../constant'
 
+export type FilePreviewType = {
+  type: string
+  url: string
+}
+
 /**
  * 点击，拖拽上传文件
  * @param domRef 上传区域 ref
@@ -15,14 +20,16 @@ function useDrag(
   const { message } = App.useApp()
 
   // 选中的文件
-  const [selectedFile, setSelectFile] = useState<any>(null)
+  const [selectedFile, setSelectFile] = useState<File | null>(null)
   // 预览文件
-  const [filePreview, setFilePreview] = useState({ type: '', url: '' })
-  const handleDrag = (event: any) => {
+  const [filePreview, setFilePreview] = useState<FilePreviewType>({
+    type: '',
+    url: '',
+  })
+  const handleDrag = (event: DragEvent) => {
     event.preventDefault()
-    event.stopPropagation()
   }
-  const checkFile = (files: any) => {
+  const checkFile = (files: FileList) => {
     const file = files[0]
     if (!file) {
       message.error('没有选择任何文件')
@@ -42,9 +49,9 @@ function useDrag(
     }
     setSelectFile(file)
   }
-  const handleDrop = (event: any) => {
+  const handleDrop = (event: DragEvent) => {
     event.preventDefault()
-    event.stopPropagation()
+    if (!event.dataTransfer) return
     if (uploadStatus !== UPLOAD_STATUS.NOT_STARTED) return
     checkFile(event.dataTransfer.files)
   }
@@ -53,7 +60,12 @@ function useDrag(
     const fileInput = document.createElement('input')
     fileInput.type = 'file'
     fileInput.style.display = 'none'
-    fileInput.addEventListener('change', (event: any) => {
+    fileInput.addEventListener('change', (event: Event) => {
+      if (!(event.target instanceof HTMLInputElement)) {
+        message.error('事件目标不是文件输入元素')
+        return
+      }
+      if (!event.target.files) return
       checkFile(event.target.files)
     })
     document.body.appendChild(fileInput)
@@ -90,15 +102,11 @@ function useDrag(
   // 绑定拖拽事件
   useEffect(() => {
     const container = domRef.current
-    container?.addEventListener('dragenter', handleDrag)
     container?.addEventListener('dragover', handleDrag)
-    container?.addEventListener('dragleave', handleDrag)
     container?.addEventListener('drop', handleDrop)
 
     return () => {
-      container?.removeEventListener('dragenter', handleDrag)
       container?.removeEventListener('dragover', handleDrag)
-      container?.removeEventListener('dragleave', handleDrag)
       container?.removeEventListener('drop', handleDrop)
     }
   }, [])
