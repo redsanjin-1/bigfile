@@ -115,6 +115,7 @@ function useDrag(
     selectedFile,
     filePreview,
     resetFileStatus,
+    setSelectFile,
   }
 }
 

@@ -4,6 +4,7 @@
 - [x] 秒传
 - [x] 断点续传
 - [x] 失败重传
+- [x] `IndexedDB`缓存文件
 - [x] 上传进度条
 - [x] `web worker`优化性能 
 - [ ] 控制并发上传
@@ -131,6 +132,9 @@ export function bufferToHex(buffer: ArrayBuffer) {
 本次使用[`axios`](https://www.axios-http.cn/docs/intro)作为请求库，默认使用[`XHR`](https://developer.mozilla.org/en-US/docs/Web/API/XMLHttpRequest)方式发送请求，可以使用[`canceltoken`](https://www.axios-http.cn/docs/cancellation#canceltoken)；如果使用`fetch`方式，也可以使用`AbortController`来实现取消请求。
 
 断点续传的核心思想是，通过`axios`发送请求时，设置`Range`请求头，指定请求的范围，然后后端根据`Range`请求头返回对应的数据，前端再根据返回的数据进行拼接。
+
+### `IndexedDB`缓存文件
+使用[localForage](https://github.com/localForage/localForage)缓存文件，当用户上传文件时，将文件切片后，将文件及切片信息存储到`IndexedDB`中，当用户刷新页面或者下次打开页面时，从`IndexedDB`中获取切片信息，然后继续上传文件。
 
 ### 上传进度条
 通过`axios`的`onUploadProgress`事件，获取上传进度，搭配`antd`的组件`Progress`实现

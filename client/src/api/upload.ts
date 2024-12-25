@@ -13,6 +13,10 @@ export type UploadedChunkType = {
   size: number
 }
 export type UploadProgressType = Record<string, number>
+export type FileChunkType = {
+  chunk: Blob
+  chunkFileName: string
+}
 
 /**
  * 检验文件是否已经上传过

@@ -16,3 +16,4 @@ export const ALLOW_MEDIA_TYPE = [
   'video/x-ms-wmv',
   'video/x-msvideo',
 ] // 允许上传的文件类型
+export const INDEXDB_NAME = 'file_upload_db' // indexedDB 数据库名称

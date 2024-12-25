@@ -3,8 +3,14 @@ import { InboxOutlined } from '@ant-design/icons'
 import { Button, App, theme, Progress, Space, Spin } from 'antd'
 import { MessageInstance } from 'antd/es/message/interface'
 import axios, { CancelTokenSource } from 'axios'
+import localforage from 'localforage'
 // import { getFileName } from './utils'
-import { CHUNK_SIZE, UPLOAD_STATUS, MAX_RETRIES } from './constant'
+import {
+  CHUNK_SIZE,
+  UPLOAD_STATUS,
+  MAX_RETRIES,
+  INDEXDB_NAME,
+} from './constant'
 import useDrag, { FilePreviewType } from './hooks/useDrag'
 import {
   verifyFile,
@@ -12,6 +18,7 @@ import {
   createUploadRequest,
   UploadProgressType,
   UploadedChunkType,
+  FileChunkType,
 } from './api'
 import './FileUploader.css'
 
@@ -19,10 +26,29 @@ function FileUploader() {
   const { message } = App.useApp()
   const uploadContainerRef = useRef<HTMLDivElement>(null)
   const [uploadStatus, setUploadStatus] = useState(UPLOAD_STATUS.NOT_STARTED)
-  const { filePreview, selectedFile, resetFileStatus } = useDrag(
+  const { filePreview, selectedFile, resetFileStatus, setSelectFile } = useDrag(
     uploadContainerRef,
     uploadStatus
   )
+  // 获取 indexDB 上传文件数据
+  useEffect(() => {
+    // 配置 indexDB
+    localforage.config({
+      name: INDEXDB_NAME,
+    })
+    localforage.keys().then((keys) => {
+      console.log('indexdb keys', keys)
+      keys
+        .filter((key) => key.startsWith(INDEXDB_NAME))
+        .map((key) => {
+          if (!key.endsWith('_chunks')) {
+            localforage.getItem(key).then((file) => {
+              setSelectFile(file as File)
+            })
+          }
+        })
+    })
+  }, [])
   // web worker
   const [filenameWorker, setFileNameWorker] = useState<Worker>()
   const [isCalculatingFilename, setIsCalculatingFilename] = useState(false)
@@ -104,14 +130,35 @@ function FileUploader() {
       return
     }
     setUploadStatus(UPLOAD_STATUS.UPLOADING)
-    if (filenameWorker) {
+    const dbKeys = await localforage.keys()
+    // 本地有文件未上传完
+    if (dbKeys.length > 0) {
+      dbKeys
+        .filter((key) => key.startsWith(INDEXDB_NAME))
+        .map((key) => {
+          if (!key.endsWith('_chunks')) {
+            const filename = key.replace(INDEXDB_NAME + '_', '')
+            console.log('reupload', filename)
+            uploadFile(
+              filename,
+              message,
+              setUploadProgress,
+              resetAllStatus,
+              setCancelTokens
+            )
+          }
+        })
+    } else {
+      if (!filenameWorker) {
+        return
+      }
       filenameWorker.postMessage(selectedFile)
       setIsCalculatingFilename(true)
       filenameWorker.onmessage = async (event) => {
-        console.log('worker', event.data)
+        console.log('filename from worker', event.data)
         setIsCalculatingFilename(false)
+        await createFileChunks(selectedFile, event.data)
         await uploadFile(
-          selectedFile,
           event.data,
           message,
           setUploadProgress,
@@ -120,16 +167,6 @@ function FileUploader() {
         )
       }
     }
-    // const filename = await getFileName(selectedFile)
-    // console.log('filename', filename)
-    // await uploadFile(
-    //   selectedFile,
-    //   filename,
-    //   message,
-    //   setUploadProgress,
-    //   resetAllStatus,
-    //   setCancelTokens
-    // )
   }
   const resetAllStatus = () => {
     resetFileStatus()
@@ -169,11 +206,9 @@ function getContainerStyle() {
 
 /**
  * 实现切片上传
- * @param file 文件
  * @param filename 文件名
  */
 async function uploadFile(
-  file: File,
   filename: string,
   message: MessageInstance,
   setUploadProgress: Function,
@@ -184,12 +219,13 @@ async function uploadFile(
   const { needUpload, uploadedChunkList } = await verifyFile(filename)
   if (!needUpload) {
     message.success('文件已存在，秒传成功')
+    await removeIndexDBFileInfo()
     return resetAllStatus()
   }
   // 生成切片
-  const chunks = createFileChunks(file, filename)
+  const chunks = await getFileChunks(filename)
   const newCancelTokens: CancelTokenSource[] = []
-  const requests = chunks.map(({ chunk, chunkFileName }) => {
+  const requests = (chunks || []).map(({ chunk, chunkFileName }) => {
     const cancelToken = axios.CancelToken.source()
     newCancelTokens.push(cancelToken)
     const existingChunk = uploadedChunkList.find(
@@ -242,6 +278,7 @@ async function uploadFile(
     // 合并分片
     await mergeFile(filename)
     await message.success('上传成功')
+    await removeIndexDBFileInfo()
     resetAllStatus()
   } catch (error) {
     // 用户主动点击暂停
@@ -253,7 +290,6 @@ async function uploadFile(
       if (retryCount < MAX_RETRIES) {
         console.log('上传失败了，重试中...')
         uploadFile(
-          file,
           filename,
           message,
           setUploadProgress,
@@ -275,8 +311,8 @@ async function uploadFile(
  * @param filename 文件名
  * @returns
  */
-function createFileChunks(file: File, filename: string) {
-  let chunks = []
+async function createFileChunks(file: File, filename: string) {
+  let chunks: FileChunkType[] = []
   let count = Math.ceil(file.size / CHUNK_SIZE)
   for (let i = 0; i < count; i++) {
     let chunk = file.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE)
@@ -285,8 +321,28 @@ function createFileChunks(file: File, filename: string) {
       chunkFileName: `${filename}-${i}`,
     })
   }
+  return Promise.all([
+    localforage.setItem(`${INDEXDB_NAME}_${filename}`, file),
+    localforage.setItem(`${INDEXDB_NAME}_${filename}_chunks`, chunks),
+  ])
+}
 
-  return chunks
+/**
+ * 获取切片
+ * @param filename
+ * @returns
+ */
+async function getFileChunks(filename: string) {
+  return localforage.getItem<FileChunkType[]>(
+    `${INDEXDB_NAME}_${filename}_chunks`
+  )
+}
+
+/**
+ * 删除indexdb文件及切片
+ */
+function removeIndexDBFileInfo() {
+  return localforage.clear()
 }
 
 /**
