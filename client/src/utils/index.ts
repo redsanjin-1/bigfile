@@ -30,3 +30,37 @@ export function bufferToHex(buffer: ArrayBuffer) {
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('')
 }
+
+/**
+ * 请求队列
+ */
+export class RequestQueue {
+  concurrency: number // 并发数
+  queue: any[]
+  running: number
+
+  constructor(concurrency = 5) {
+    this.concurrency = concurrency
+    this.queue = []
+    this.running = 0
+  }
+
+  add(request: () => Promise<any>) {
+    this.queue.push({ request })
+    this.process()
+  }
+
+  process() {
+    if (this.running >= this.concurrency || this.queue.length === 0) {
+      return
+    }
+
+    this.running++
+
+    const { request } = this.queue.shift()
+    request().finally(() => {
+      this.running--
+      this.process()
+    })
+  }
+}

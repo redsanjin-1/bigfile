@@ -7,7 +7,11 @@
 - [x] `IndexedDB`缓存文件
 - [x] 上传进度条
 - [x] `web worker`优化性能 
-- [ ] 控制并发上传
+- [x] 控制并发上传
+
+
+### 预览
+![预览图](https://ik.imagekit.io/redsanjin/blog/bigfile.webp?updatedAt=1735227657026)
 
 ## 前端项目
 使用`vite` + `react18` + `typescript` + `antd`构建  
@@ -170,6 +174,53 @@ return axiosInstance.post(`/upload/${filename}`, chunk, {
 * 在主线程引入`filenameWorker.js`, 用户上传文件后`postMessage`到`worker`线程，在 监听`message`事件得到文件名
 
 ### 控制并发上传
+```typescript
+/**
+ * 请求队列
+ */
+export class RequestQueue {
+  concurrency: number // 并发数
+  queue: any[]
+  running: number
+
+  constructor(concurrency = 5) {
+    this.concurrency = concurrency
+    this.queue = []
+    this.running = 0
+  }
+
+  add(request: () => Promise<any>) {
+    this.queue.push({ request })
+    this.process()
+  }
+
+  process() {
+    if (this.running >= this.concurrency || this.queue.length === 0) {
+      return
+    }
+
+    this.running++
+
+    const { request } = this.queue.shift()
+    request().finally(() => {
+      this.running--
+      this.process()
+    })
+  }
+}
+
+// 控制并发上传
+const queue = new RequestQueue(MAX_CONCURRENT_REQUESTS)
+const uploadPromises = requests.map((request) => {
+  return new Promise((resolve) => {
+    queue.add(() => request().then(resolve))
+  })
+})
+
+...
+await Promise.all(uploadPromises)
+...
+```
 
 ## 后端项目
 使用`express` + `typescript`构建

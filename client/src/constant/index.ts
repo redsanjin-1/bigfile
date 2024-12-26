@@ -17,3 +17,4 @@ export const ALLOW_MEDIA_TYPE = [
   'video/x-msvideo',
 ] // 允许上传的文件类型
 export const INDEXDB_NAME = 'file_upload_db' // indexedDB 数据库名称
+export const MAX_CONCURRENT_REQUESTS = 5 // 最大并发上传切片数
