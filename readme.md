@@ -11,7 +11,7 @@
 
 
 ### 预览
-![预览图](https://ik.imagekit.io/redsanjin/blog/bigfile.webp?updatedAt=1735227657026)
+![预览图](https://freeimage.host/i/big-file-1.2eW4wLN)
 
 ## 前端项目
 使用`vite` + `react18` + `typescript` + `antd`构建  
